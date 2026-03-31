@@ -8,10 +8,12 @@ namespace nvidiaProfileInspector.UI.Views
     using System;
     using System.Collections.Generic;
     using System.IO;
+    using System.Linq;
     using System.Runtime.InteropServices;
     using System.Windows;
     using System.Windows.Controls;
     using System.Windows.Interop;
+    using System.Windows.Input;
     using System.Windows.Media;
     using System.Windows.Threading;
 
@@ -19,18 +21,26 @@ namespace nvidiaProfileInspector.UI.Views
     {
         private readonly MainViewModel _viewModel;
         private readonly ThemeManager _themeManager;
+        private readonly bool _disableInitialScan;
+        private readonly bool _showOnlyCustomizedSettings;
         private HwndSource _windowSource;
         private bool _mainWindowNativeDropRegistered;
 
-        public MainWindow()
+        public MainWindow(bool showOnlyCustomizedSettings = false, bool disableInitialScan = false)
         {
             InitializeComponent();
+            _showOnlyCustomizedSettings = showOnlyCustomizedSettings;
+            _disableInitialScan = disableInitialScan;
             _viewModel = App.Bootstrapper.Resolve<MainViewModel>();
             _themeManager = App.Bootstrapper.Resolve<ThemeManager>();
             _viewModel.OnOpenBitEditor += OnOpenBitEditor;
             _viewModel.OnFocusFilter += () => FilterTextBox.Focus();
             _themeManager.ThemeChanged += OnThemeChanged;
             DataContext = _viewModel;
+
+            if (_showOnlyCustomizedSettings)
+                _viewModel.FilterTypeIndex = 0;
+
             ApplyMockTitle();
             SourceInitialized += MainWindow_SourceInitialized;
         }
@@ -90,6 +100,18 @@ namespace nvidiaProfileInspector.UI.Views
                 return IntPtr.Zero;
             }
 
+            if (msg == MessageHelper.WM_COPYDATA)
+            {
+                var data = Marshal.PtrToStructure<MessageHelper.COPYDATASTRUCT>(lParam);
+                var message = data.lpData ?? string.Empty;
+
+                if (HandleCopyDataMessage(message))
+                {
+                    handled = true;
+                    return new IntPtr(1);
+                }
+            }
+
             // Fix controls jumping/flickering during resize
             // Based on https://github.com/sourcechord/FluentWPF/issues/102#issuecomment-903709242
             if (msg == MessageHelper.WM_NCCALCSIZE && wParam != IntPtr.Zero)
@@ -133,32 +155,19 @@ namespace nvidiaProfileInspector.UI.Views
 
         private void HandleDroppedFiles(string[] files)
         {
-            if (files == null || files.Length != 1)
+            if (files == null || files.Length == 0)
                 return;
 
-            var droppedFile = files[0];
-            var extension = Path.GetExtension(droppedFile)?.ToLowerInvariant();
-
-            if (extension == ".nip")
+            if (files.All(file => string.Equals(Path.GetExtension(file), ".nip", StringComparison.InvariantCultureIgnoreCase)))
             {
-                try
-                {
-                    var report = _viewModel.ImportFile(droppedFile);
-                    _viewModel.RefreshCommand.Execute(null);
-
-                    if (string.IsNullOrEmpty(report))
-                        _viewModel.ShowSnackbar("Profile(s) imported successfully!", "Success");
-                    else
-                        MessageBoxViewModel.Show($"Some profile(s) could not be imported!\r\n\r\n{report}", "Warning", MessageBoxButton.OK, MessageBoxImage.Warning);
-                }
-                catch (Exception ex)
-                {
-                    MessageBoxViewModel.Show($"Import Error: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
-                }
-
+                ImportNipFiles(files, showSuccessNotification: true);
                 return;
             }
 
+            if (files.Length != 1)
+                return;
+
+            var droppedFile = files[0];
             string profileName;
             var applicationName = Common.Helper.ShortcutResolver.ResolveExecuteable(droppedFile, out profileName);
             if (string.IsNullOrEmpty(applicationName))
@@ -188,7 +197,7 @@ namespace nvidiaProfileInspector.UI.Views
         private async void Window_Loaded(object sender, RoutedEventArgs e)
         {
             RestoreWindowSettings();
-            await _viewModel.InitializeAsync();
+            await _viewModel.InitializeAsync(_disableInitialScan);
         }
 
         private void OnThemeChanged(string themeName)
@@ -245,6 +254,46 @@ namespace nvidiaProfileInspector.UI.Views
             _mainWindowNativeDropRegistered = true;
         }
 
+        private bool HandleCopyDataMessage(string message)
+        {
+            if (string.Equals(message, App.LegacyProfilesImportedMessage, StringComparison.InvariantCulture))
+            {
+                _viewModel.RefreshCommand.Execute(null);
+                _viewModel.ShowSnackbar("Profile(s) imported successfully!", "Success");
+                return true;
+            }
+
+            var files = App.ParseImportFilesMessage(message);
+            if (files.Count == 0)
+                return false;
+
+            ImportNipFiles(files, showSuccessNotification: true);
+            return true;
+        }
+
+        private void ImportNipFiles(IEnumerable<string> files, bool showSuccessNotification)
+        {
+            try
+            {
+                var report = _viewModel.ImportFiles(files);
+                _viewModel.RefreshCommand.Execute(null);
+
+                if (string.IsNullOrWhiteSpace(report))
+                {
+                    if (showSuccessNotification)
+                        _viewModel.ShowSnackbar("Profile(s) imported successfully!", "Success");
+                }
+                else
+                {
+                    MessageBoxViewModel.Show($"Some profile(s) could not be imported!\r\n\r\n{report}", "Warning", MessageBoxButton.OK, MessageBoxImage.Warning);
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBoxViewModel.Show($"Import Error: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
         private void OnOpenBitEditor(uint settingId, uint value, string settingName)
         {
             var dialog = new UI.Views.Dialogs.BitEditorDialog(settingId, value, settingName);
@@ -275,6 +324,44 @@ namespace nvidiaProfileInspector.UI.Views
                 _viewModel.SelectProfile(profile.ProfileName);
                 combo.SelectedIndex = -1;
             }
+        }
+
+        private void ModifiedProfilesCombo_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+        {
+            if (e.Key != System.Windows.Input.Key.Enter
+                || sender is not ComboBox combo
+                || !combo.IsDropDownOpen)
+            {
+                return;
+            }
+
+            var focusedProfile = GetFocusedModifiedProfileItem() ?? combo.SelectedItem as ModifiedProfileItem;
+            if (focusedProfile == null)
+            {
+                return;
+            }
+
+            e.Handled = true;
+            combo.IsDropDownOpen = false;
+            _viewModel.SelectProfile(focusedProfile.ProfileName);
+            combo.SelectedIndex = -1;
+        }
+
+        private ModifiedProfileItem GetFocusedModifiedProfileItem()
+        {
+            DependencyObject current = Keyboard.FocusedElement as DependencyObject;
+
+            while (current != null)
+            {
+                if (current is ComboBoxItem comboBoxItem && comboBoxItem.DataContext is ModifiedProfileItem profile)
+                {
+                    return profile;
+                }
+
+                current = VisualTreeHelper.GetParent(current);
+            }
+
+            return null;
         }
 
         private void ExportButton_Click(object sender, RoutedEventArgs e)
@@ -337,11 +424,19 @@ namespace nvidiaProfileInspector.UI.Views
             {
                 new ActionCardsDialog.ActionCardItem
                 {
-                    Title = "Import profile(s)",
-                    Description = "Import one or more .nip files into the profile database.",
+                    Title = "Replace imported profile(s)",
+                    Description = "Import one or more .nip files and replace each imported profile's current apps and settings with the file contents.",
                     IconPath = (Geometry)Application.Current.Resources["IconImport"],
                     IconFill = (Brush)Application.Current.Resources["TextSecondaryBrush"],
                     Command = () => ImportProfiles_Click(null, null)
+                },
+                new ActionCardsDialog.ActionCardItem
+                {
+                    Title = "Merge imported profile(s)",
+                    Description = "Import one or more .nip files and merge them into the profile targets named inside the files. Existing target values stay unless the import contains the same setting, in which case the imported value wins.",
+                    IconPath = (Geometry)Application.Current.Resources["IconUser"],
+                    IconFill = (Brush)Application.Current.Resources["TextSecondaryBrush"],
+                    Command = () => MergeImportedProfiles_Click(null, null)
                 },
                 new ActionCardsDialog.ActionCardItem
                 {
@@ -384,6 +479,11 @@ namespace nvidiaProfileInspector.UI.Views
         private void ImportProfiles_Click(object sender, RoutedEventArgs e)
         {
             _viewModel.ImportProfiles();
+        }
+
+        private void MergeImportedProfiles_Click(object sender, RoutedEventArgs e)
+        {
+            _viewModel.MergeImportedProfiles();
         }
 
         private void ImportAllNVIDIA_Click(object sender, RoutedEventArgs e)

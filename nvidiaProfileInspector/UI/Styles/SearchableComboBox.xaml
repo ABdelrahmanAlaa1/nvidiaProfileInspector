@@ -30,7 +30,7 @@
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="controls:SearchableComboBox">
-                    <Grid >
+                    <Grid TextOptions.TextFormattingMode="Display">
                         <ToggleButton
                             x:Name="ToggleButton"
                             Grid.ColumnSpan="2"
@@ -71,6 +71,8 @@
 
                         <TextBox
                             x:Name="PART_EditableTextBox"
+                            MinLines="1"
+                            MaxLines="1"
                             Margin="8,0,30,0"
                             Padding="4,0"
                             HorizontalAlignment="Stretch"
@@ -116,7 +118,9 @@
                                     Background="{DynamicResource Layer1BackgroundBrush}"
                                     BorderBrush="{TemplateBinding BorderBrush}"
                                     BorderThickness="1"
-                                    CornerRadius="8">
+                                    CornerRadius="8"
+                                    TextOptions.TextFormattingMode="Display"
+                                    RenderOptions.ClearTypeHint="Enabled">
                                     <Grid FocusManager.IsFocusScope="True">
                                         <Grid.RowDefinitions>
                                             <RowDefinition Height="Auto" />
@@ -189,15 +193,18 @@
                                         <ContentPresenter Grid.Column="1" VerticalAlignment="Center" />
                                     </Grid>
                                 </Border>
-                                <ControlTemplate.Triggers>
-                                    <Trigger Property="IsMouseOver" Value="True">
-                                        <Setter TargetName="border" Property="Background" Value="{DynamicResource HoverOverlayBrush}" />
-                                    </Trigger>
-                                    <Trigger Property="IsSelected" Value="True">
-                                        <Setter TargetName="SelectionIndicator" Property="Visibility" Value="Visible" />
-                                        <Setter Property="FontWeight" Value="SemiBold" />
-                                    </Trigger>
-                                </ControlTemplate.Triggers>
+                                    <ControlTemplate.Triggers>
+                                        <Trigger Property="IsMouseOver" Value="True">
+                                            <Setter TargetName="border" Property="Background" Value="{DynamicResource HoverOverlayBrush}" />
+                                        </Trigger>
+                                        <Trigger Property="IsKeyboardFocusWithin" Value="True">
+                                            <Setter TargetName="border" Property="Background" Value="{DynamicResource HoverOverlayBrush}" />
+                                        </Trigger>
+                                        <Trigger Property="IsSelected" Value="True">
+                                            <Setter TargetName="SelectionIndicator" Property="Visibility" Value="Visible" />
+                                            <Setter Property="FontWeight" Value="SemiBold" />
+                                        </Trigger>
+                                    </ControlTemplate.Triggers>
                             </ControlTemplate>
                         </Setter.Value>
                     </Setter>
@@ -274,7 +281,9 @@
                                     Background="{DynamicResource Layer1BackgroundBrush}"
                                     BorderBrush="{DynamicResource ControlBorderBrush}"
                                     BorderThickness="1"
-                                    CornerRadius="8">
+                                    CornerRadius="8"
+                                    TextOptions.TextFormattingMode="Display"
+                                    RenderOptions.ClearTypeHint="Enabled">
                                     <Grid FocusManager.IsFocusScope="True">
                                         <Grid.RowDefinitions>
                                             <RowDefinition Height="Auto" />
@@ -336,6 +345,9 @@
                                 </Border>
                                 <ControlTemplate.Triggers>
                                     <Trigger Property="IsMouseOver" Value="True">
+                                        <Setter TargetName="border" Property="Background" Value="{DynamicResource HoverOverlayBrush}" />
+                                    </Trigger>
+                                    <Trigger Property="IsKeyboardFocusWithin" Value="True">
                                         <Setter TargetName="border" Property="Background" Value="{DynamicResource HoverOverlayBrush}" />
                                     </Trigger>
                                     <Trigger Property="IsSelected" Value="True">
